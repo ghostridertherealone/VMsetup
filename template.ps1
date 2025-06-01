@@ -1,67 +1,42 @@
-Requires -RunAsAdministrator
+# Get the script directory and Desktop_Shortcuts folder path
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$shortcutsFolder = Join-Path $scriptDir "Desktop_Shortcuts"
+$desktopPath = [Environment]::GetFolderPath("Desktop")
 
-$scriptRoot = $PSScriptRoot
-$customShortcutsFolder = Join-Path -Path $scriptRoot -ChildPath "Taskbar_Shortcuts"
+# Check if Desktop_Shortcuts folder exists
+if (-not (Test-Path $shortcutsFolder)) {
+    Write-Error "Desktop_Shortcuts folder not found in script directory: $scriptDir"
+    exit 1
+}
 
-$verbUnpin = "Unpin from Tas&kbar"
-$verbPin = "Pin to Tas&kbar"
-$actionDelayMilliseconds = 300
+# Get all shortcut files (.lnk) from the folder
+$shortcuts = Get-ChildItem -Path $shortcutsFolder -Filter "*.lnk" -File
 
-$shellApplication = New-Object -ComObject Shell.Application
+# Check if there are any shortcuts
+if ($shortcuts.Count -eq 0) {
+    Write-Warning "No shortcut files (.lnk) found in Desktop_Shortcuts folder"
+    exit 0
+}
 
-$standardUserPinnedFolder = Join-Path -Path $env:APPDATA -ChildPath "Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"
-if (Test-Path $standardUserPinnedFolder) {
-    $folderObject = $shellApplication.Namespace($standardUserPinnedFolder)
-    if ($folderObject) {
-        $itemsToUnpin = @($folderObject.Items())
-        foreach ($itemToUnpin in $itemsToUnpin) {
-            try {
-                $unpinActionVerb = $itemToUnpin.Verbs() | Where-Object { $_.Name -eq $verbUnpin }
-                if ($unpinActionVerb) {
-                    $unpinActionVerb.DoIt()
-                    Start-Sleep -Milliseconds $actionDelayMilliseconds
-                }
-            } catch {}
-        }
-        Start-Sleep -Seconds 1
+# Determine how many shortcuts to select (max 5 or total available)
+$selectCount = [Math]::Min(5, $shortcuts.Count)
+
+# Randomly select shortcuts
+$selectedShortcuts = $shortcuts | Get-Random -Count $selectCount
+
+Write-Host "Copying $($selectedShortcuts.Count) random shortcuts to desktop:"
+
+# Copy each selected shortcut to desktop
+foreach ($shortcut in $selectedShortcuts) {
+    $destinationPath = Join-Path $desktopPath $shortcut.Name
+    
+    try {
+        Copy-Item -Path $shortcut.FullName -Destination $destinationPath -Force
+        Write-Host "✓ Copied: $($shortcut.Name)"
+    }
+    catch {
+        Write-Error "Failed to copy $($shortcut.Name): $($_.Exception.Message)"
     }
 }
 
-if (-not (Test-Path $customShortcutsFolder)) {
-    exit
-}
-
-$availableShortcutsList = Get-ChildItem -Path $customShortcutsFolder -Filter *.lnk -ErrorAction SilentlyContinue
-if ($availableShortcutsList.Count -eq 0) {
-    exit
-}
-
-$minimumPins = 5
-$maximumPins = 7
-$numberOfPinsToSelect = Get-Random -Minimum $minimumPins -Maximum ($maximumPins + 1)
-
-if ($numberOfPinsToSelect -gt $availableShortcutsList.Count) {
-    $numberOfPinsToSelect = $availableShortcutsList.Count
-}
-
-if ($numberOfPinsToSelect -eq 0) {
-    exit
-}
-
-$selectedShortcutsToPin = $availableShortcutsList | Get-Random -Count $numberOfPinsToSelect
-
-foreach ($shortcutItem in $selectedShortcutsToPin) {
-    try {
-        $shortcutDirectoryObject = $shellApplication.Namespace($shortcutItem.DirectoryName)
-        if ($shortcutDirectoryObject) {
-            $shortcutFileObject = $shortcutDirectoryObject.ParseName($shortcutItem.Name)
-            if ($shortcutFileObject) {
-                $pinActionVerb = $shortcutFileObject.Verbs() | Where-Object { $_.Name -eq $verbPin }
-                if ($pinActionVerb) {
-                    $pinActionVerb.DoIt()
-                    Start-Sleep -Milliseconds $actionDelayMilliseconds
-                }
-            }
-        }
-    } catch {}
-}
+Write-Host "`nCompleted! $($selectedShortcuts.Count) shortcuts added to desktop."
