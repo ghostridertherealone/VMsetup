@@ -37,9 +37,31 @@ public class Win32 {
 "@
 
 function Get-DesktopWindow {
+    # Try standard desktop window first
     $progman = [Win32]::FindWindow("Progman", "Program Manager")
     $shellDll = [Win32]::FindWindowEx($progman, [IntPtr]::Zero, "SHELLDLL_DefView", $null)
-    return [Win32]::FindWindowEx($shellDll, [IntPtr]::Zero, "SysListView32", "FolderView")
+    $listView = [Win32]::FindWindowEx($shellDll, [IntPtr]::Zero, "SysListView32", "FolderView")
+    
+    if ($listView -ne [IntPtr]::Zero) {
+        return $listView
+    }
+    
+    # Try alternative desktop window (Windows 10 with multiple monitors or special configs)
+    $workerW = [IntPtr]::Zero
+    do {
+        $workerW = [Win32]::FindWindowEx([IntPtr]::Zero, $workerW, "WorkerW", $null)
+        if ($workerW -ne [IntPtr]::Zero) {
+            $shellDll = [Win32]::FindWindowEx($workerW, [IntPtr]::Zero, "SHELLDLL_DefView", $null)
+            if ($shellDll -ne [IntPtr]::Zero) {
+                $listView = [Win32]::FindWindowEx($shellDll, [IntPtr]::Zero, "SysListView32", "FolderView")
+                if ($listView -ne [IntPtr]::Zero) {
+                    return $listView
+                }
+            }
+        }
+    } while ($workerW -ne [IntPtr]::Zero)
+    
+    return [IntPtr]::Zero
 }
 
 function Get-ItemCount($hwnd) {
