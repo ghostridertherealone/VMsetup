@@ -98,20 +98,19 @@ try {
     
     Write-Host "Found $itemCount desktop items"
     
-    # Get current positions
+    # Get desktop dimensions
+    Add-Type -AssemblyName System.Windows.Forms
+    $screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    $desktopWidth = $screen.Width - 100  # Leave margin for icon width
+    $desktopHeight = $screen.Height - 100  # Leave margin for icon height
+    
+    # Generate random positions across entire desktop
+    $random = New-Object System.Random
     $positions = @()
     for ($i = 0; $i -lt $itemCount; $i++) {
-        $pos = Get-ItemPosition $desktopHwnd $i
-        $positions += $pos
-    }
-    
-    # Shuffle positions using Fisher-Yates algorithm
-    $random = New-Object System.Random
-    for ($i = $positions.Count - 1; $i -gt 0; $i--) {
-        $j = $random.Next(0, $i + 1)
-        $temp = $positions[$i]
-        $positions[$i] = $positions[$j]
-        $positions[$j] = $temp
+        $x = $random.Next(50, $desktopWidth)
+        $y = $random.Next(50, $desktopHeight)
+        $positions += @{ X = $x; Y = $y }
     }
     
     # Apply shuffled positions
