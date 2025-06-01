@@ -1,23 +1,20 @@
-# Desktop Shortcut Randomizer - Direct Approach
-# Moves desktop shortcuts to random positions
-
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
+# Desktop Shortcut Randomizer
+# Randomly rearranges desktop shortcuts to different grid positions
 
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
-using System.Text;
+using System.Drawing;
 
-public class Desktop {
-    [DllImport("user32.dll", SetLastError = true)]
+public class Win32 {
+    [DllImport("user32.dll")]
     public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
     
-    [DllImport("user32.dll", SetLastError = true)]
+    [DllImport("user32.dll")]
     public static extern IntPtr FindWindowEx(IntPtr hwndParent, IntPtr hwndChildAfter, string lpszClass, string lpszWindow);
     
     [DllImport("user32.dll")]
-    public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+    public static extern int SendMessage(IntPtr hWnd, uint Msg, int wParam, int lParam);
     
     [DllImport("user32.dll")]
     public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
@@ -25,137 +22,88 @@ public class Desktop {
     [DllImport("user32.dll")]
     public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
     
-    [DllImport("user32.dll")]
-    public static extern bool InvalidateRect(IntPtr hWnd, IntPtr lpRect, bool bErase);
-    
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT {
-        public int Left, Top, Right, Bottom;
-    }
-    
-    [StructLayout(LayoutKind.Sequential)]
-    public struct POINT {
-        public int X, Y;
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
     }
     
     public const uint LVM_GETITEMCOUNT = 0x1004;
     public const uint LVM_GETITEMPOSITION = 0x1010;
     public const uint LVM_SETITEMPOSITION = 0x100F;
-    public const uint LVM_ARRANGE = 0x1016;
-    public const uint LVA_DEFAULT = 0x0000;
-    public const uint SWP_NOSIZE = 0x0001;
-    public const uint SWP_NOZORDER = 0x0004;
 }
 "@
 
-# Get desktop ListView handle
-function Get-DesktopHandle {
-    # Try multiple methods for Windows 10/11
-    $handles = @()
-    
-    # Method 1: Classic Progman
-    $progman = [Desktop]::FindWindow("Progman", "Program Manager")
-    if ($progman -ne [IntPtr]::Zero) {
-        $defview = [Desktop]::FindWindowEx($progman, [IntPtr]::Zero, "SHELLDLL_DefView", $null)
-        if ($defview -ne [IntPtr]::Zero) {
-            $listview = [Desktop]::FindWindowEx($defview, [IntPtr]::Zero, "SysListView32", $null)
-            if ($listview -ne [IntPtr]::Zero) { $handles += $listview }
-        }
-    }
-    
-    # Method 2: WorkerW windows
-    $workerw = [IntPtr]::Zero
-    do {
-        $workerw = [Desktop]::FindWindowEx([IntPtr]::Zero, $workerw, "WorkerW", $null)
-        if ($workerw -ne [IntPtr]::Zero) {
-            $defview = [Desktop]::FindWindowEx($workerw, [IntPtr]::Zero, "SHELLDLL_DefView", $null)
-            if ($defview -ne [IntPtr]::Zero) {
-                $listview = [Desktop]::FindWindowEx($defview, [IntPtr]::Zero, "SysListView32", $null)
-                if ($listview -ne [IntPtr]::Zero) { $handles += $listview }
-            }
-        }
-    } while ($workerw -ne [IntPtr]::Zero)
-    
-    # Return handle with most items
-    $bestHandle = [IntPtr]::Zero
-    $maxItems = 0
-    
-    foreach ($handle in $handles) {
-        $itemCount = [Desktop]::SendMessage($handle, [Desktop]::LVM_GETITEMCOUNT, [IntPtr]::Zero, [IntPtr]::Zero)
-        if ($itemCount -gt $maxItems) {
-            $maxItems = $itemCount
-            $bestHandle = $handle
-        }
-    }
-    
-    return @{ Handle = $bestHandle; Count = $maxItems }
+function Get-DesktopWindow {
+    $progman = [Win32]::FindWindow("Progman", "Program Manager")
+    $shellDll = [Win32]::FindWindowEx($progman, [IntPtr]::Zero, "SHELLDLL_DefView", $null)
+    return [Win32]::FindWindowEx($shellDll, [IntPtr]::Zero, "SysListView32", "FolderView")
 }
 
-# Get desktop info
-$desktopInfo = Get-DesktopHandle
-$desktopHandle = $desktopInfo.Handle
-$itemCount = $desktopInfo.Count
+function Get-ItemCount($hwnd) {
+    return [Win32]::SendMessage($hwnd, [Win32]::LVM_GETITEMCOUNT, 0, 0)
+}
 
-if ($desktopHandle -eq [IntPtr]::Zero -or $itemCount -eq 0) {
-    Write-Host "No desktop shortcuts found or unable to access desktop." -ForegroundColor Red
+function Get-ItemPosition($hwnd, $index) {
+    $position = [Win32]::SendMessage($hwnd, [Win32]::LVM_GETITEMPOSITION, $index, 0)
+    $x = $position -band 0xFFFF
+    $y = ($position -shr 16) -band 0xFFFF
+    return @{ X = $x; Y = $y }
+}
+
+function Set-ItemPosition($hwnd, $index, $x, $y) {
+    $lParam = ($y -shl 16) -bor ($x -band 0xFFFF)
+    [Win32]::SendMessage($hwnd, [Win32]::LVM_SETITEMPOSITION, $index, $lParam) | Out-Null
+}
+
+try {
+    Write-Host "Randomizing desktop shortcuts..." -ForegroundColor Green
+    
+    # Get desktop ListView window
+    $desktopHwnd = Get-DesktopWindow
+    if ($desktopHwnd -eq [IntPtr]::Zero) {
+        throw "Could not find desktop window"
+    }
+    
+    # Get number of items on desktop
+    $itemCount = Get-ItemCount $desktopHwnd
+    if ($itemCount -eq 0) {
+        Write-Host "No shortcuts found on desktop" -ForegroundColor Yellow
+        exit
+    }
+    
+    Write-Host "Found $itemCount desktop items"
+    
+    # Get current positions
+    $positions = @()
+    for ($i = 0; $i -lt $itemCount; $i++) {
+        $pos = Get-ItemPosition $desktopHwnd $i
+        $positions += $pos
+    }
+    
+    # Shuffle positions using Fisher-Yates algorithm
+    $random = New-Object System.Random
+    for ($i = $positions.Count - 1; $i -gt 0; $i--) {
+        $j = $random.Next(0, $i + 1)
+        $temp = $positions[$i]
+        $positions[$i] = $positions[$j]
+        $positions[$j] = $temp
+    }
+    
+    # Apply shuffled positions
+    for ($i = 0; $i -lt $itemCount; $i++) {
+        Set-ItemPosition $desktopHwnd $i $positions[$i].X $positions[$i].Y
+    }
+    
+    # Refresh desktop
+    $progman = [Win32]::FindWindow("Progman", "Program Manager")
+    [Win32]::SendMessage($progman, 0x111, 0x7103, 0) | Out-Null
+    
+    Write-Host "Desktop shortcuts randomized successfully!" -ForegroundColor Green
+    
+} catch {
+    Write-Error "Error: $($_.Exception.Message)"
     exit 1
-}
-
-Write-Host "Found $itemCount desktop items. Randomizing..." -ForegroundColor Green
-
-# Get screen dimensions
-$screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-$screenWidth = $screen.Width
-$screenHeight = $screen.Height
-
-# Generate random positions
-$random = New-Object Random
-$iconSize = 75
-$margin = 50
-
-# Create grid of possible positions
-$cols = [Math]::Floor(($screenWidth - $margin * 2) / $iconSize)
-$rows = [Math]::Floor(($screenHeight - $margin * 2) / $iconSize)
-
-$positions = @()
-for ($r = 0; $r -lt $rows; $r++) {
-    for ($c = 0; $c -lt $cols; $c++) {
-        $x = $margin + ($c * $iconSize)
-        $y = $margin + ($r * $iconSize)
-        $positions += @{X = $x; Y = $y}
-    }
-}
-
-# Shuffle positions
-for ($i = $positions.Count - 1; $i -gt 0; $i--) {
-    $j = $random.Next($i + 1)
-    $temp = $positions[$i]
-    $positions[$i] = $positions[$j]
-    $positions[$j] = $temp
-}
-
-# Apply new positions
-for ($i = 0; $i -lt $itemCount -and $i -lt $positions.Count; $i++) {
-    $pos = $positions[$i]
-    $x = $pos.X
-    $y = $pos.Y
-    
-    # Pack coordinates into lParam
-    $lParam = [IntPtr]($y -shl 16 -bor ($x -band 0xFFFF))
-    
-    # Set item position
-    $result = [Desktop]::SendMessage($desktopHandle, [Desktop]::LVM_SETITEMPOSITION, [IntPtr]$i, $lParam)
-}
-
-# Force desktop refresh
-[Desktop]::InvalidateRect($desktopHandle, [IntPtr]::Zero, $true)
-[Desktop]::SendMessage($desktopHandle, [Desktop]::LVM_ARRANGE, [IntPtr][Desktop]::LVA_DEFAULT, [IntPtr]::Zero)
-
-Write-Host "Desktop shortcuts randomized! Press F5 to refresh if needed." -ForegroundColor Green
-
-# Optional: Restart explorer if changes don't appear
-$choice = Read-Host "Restart Windows Explorer to ensure changes? (y/n)"
-if ($choice -eq 'y' -or $choice -eq 'Y') {
-    Stop-Process -Name explorer -Force
-    Start-Process explorer
 }
