@@ -1,14 +1,16 @@
-$DesktopPath = [Environment]::GetFolderPath("Desktop")
-$PublicDesktopPath = [Environment]::GetFolderPath("CommonDesktopDirectory")
+# Define MAC address (12 hex digits, no colons or dashes)
+$NewMAC = "001122AABBCC"  # Customize this
 
-# Get all .lnk files from user desktop
-Get-ChildItem -Path $DesktopPath -Filter "*.lnk" | 
-    Where-Object { $_.Name -ne "Recycle Bin.lnk" } | 
-    Remove-Item -Force
+# Get adapter name (assumes it's the one with Internet access)
+$adapter = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | Select-Object -First 1
 
-# Get all .lnk files from public desktop
-Get-ChildItem -Path $PublicDesktopPath -Filter "*.lnk" | 
-    Where-Object { $_.Name -ne "Recycle Bin.lnk" } | 
-    Remove-Item -Force
+# Check the adapter
+Write-Host "Modifying adapter: $($adapter.Name)"
 
-Write-Host "Desktop shortcuts deleted (except Recycle Bin)"
+# Set Locally Administered Address (LAA)
+Set-NetAdapterAdvancedProperty -Name $adapter.Name -DisplayName "Locally Administered Address" -DisplayValue $NewMAC
+
+# Restart the adapter
+Disable-NetAdapter -Name $adapter.Name -Confirm:$false
+Start-Sleep -Seconds 2
+Enable-NetAdapter -Name $adapter.Name
